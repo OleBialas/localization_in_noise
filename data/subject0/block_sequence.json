@@ -1,0 +1,34 @@
+{
+  "label": "",
+  "n_reps": 2,
+  "conditions": [
+    -10,
+    0,
+    5
+  ],
+  "n_conditions": 3,
+  "trials": [
+    3,
+    1,
+    2,
+    3,
+    2,
+    1
+  ],
+  "this_rep_n": 0,
+  "this_trial_n": -1,
+  "this_n": -1,
+  "this_trial": [],
+  "finished": false,
+  "data": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "n_trials": 6,
+  "n_remaining": 6,
+  "kind": "non_repeating"
+}

@@ -1,80 +1,47 @@
-# STEP 1: import
-import sys
-from pathlib import Path
 import os
-from localization_in_noise import *
+from experiment import run_block, DIR
 import slab
-from freefield import setup, camera
-import numpy as np
+from freefield import main
 
-# STEP 2: Define variables
-EXPDIR = Path("D:\Projects\MRT_noise_elevation")
-speakers = [20, 22, 24, 26, 29, 31, 33, 35, 37, 39, 41, 42, 44, 46]
-speaker_repetition = 4  # explain what this varibale is for
-noise_dur = 0.5
-n_images = 5
-resolution = 0.7
-n_reps_calbration = 3
-n_reps_training = 3
-n_reps_test = 3
-n_reps_experiment = 2
-rx81_path = str(EXPDIR / Path("rcx/play_buffer_from_channel.rcx"))
-rp2_path = str(EXPDIR / Path("rcx/button_response.rcx"))
-noise_path = EXPDIR / Path("MRT_noise/MRT_noise_experiment.wav")
-conditions = [-10, 0, 5]
+# devices and circuits for the experiment:
+proc_list = [["RX81", "RX8", DIR/"rcx"/"play_buffer_from_channel.rcx"],
+             ["RX82", "RX8", DIR/"rcx"/"play_buffer_from_channel.rcx"],
+             ["RP2", "RP2",  DIR/"rcx"/"button_response.rcx"]]
 
-# STEP 3: enter subject name
-subject = "Laura"
-SUBDIR = EXPDIR / subject
+subject = "subject0"  # make folder for the subject if it does not exist yet
+if not (DIR/"data"/subject).is_dir():
+    os.makedirs(DIR/"data"/subject)
 
-# STEP 4: make subject folder(s) and generate stimulus sequences:
-if Path(SUBDIR).is_dir():
-    print("#### WARNING! Directory already exists ####")
-else:
-    os.makedirs(SUBDIR)
-    block_seq = slab.Trialsequence(conditions=conditions, n_reps=n_reps_experiment, kind='non_repeating')
-    block_seq.save_json(SUBDIR / Path("block_sequence.json"))
+# calibrate the camera
+main.initialize_setup(setup="arc", default_mode="cam_calibration", zbus=True, connection="GB", camera_type="webcam")
+calibration_targets = main.get_speaker_list([9, 16, 23])
+main.calibrate_camera_no_visual(calibration_targets, n_reps=1, n_images=5)
 
-# STEP 5: calibrate camera
-camera.init()
-camera.set(n_images=n_images, resolution=resolution)
-coords = camera.calibrate_camera(n_reps=n_reps_calbration)
-
-# Look at data, then decide what to remove:
-coords_clean = coords.copy()
-coords_clean = coords_clean[np.logical_not(np.logical_and(coords.cam == 0, coords.ele_world > 0))]
-coords_clean = coords_clean[np.logical_not(np.logical_and(coords.cam == 1, coords.ele_world < 0))]
-camera.camera_to_world(coords_clean)
-
-# STEP 6: audiovisual training
-response = setup.localization_test_freefield(speakers=speakers, n_reps=n_reps_training, visual=True)
-response.to_csv(SUBDIR/Path("%s_training.csv" % (subject)))
+# experiment configuration:
+target_speakers = main.get_speaker_list([20, 22, 24, 26, 29, 31, 33, 35, 37, 39, 41, 42, 44, 46])
+noise_gain = [-10, 0, 5]  # loudness of the MRI noise relative to the stimulus
+n_repeat_speakers = 4  # repetitions of each speaker per block
+n_repeat_conditions = 2  # repetitions of each noise level
 
 
-# STEP 7: localization test
-response = setup.localization_test_freefield(speakers=speakers, n_reps=n_reps_test, visual=False)
-response.to_csv(SUBDIR/Path("%s_test.csv" % (subject)))
+# generate a sequences to determine the order of conditions and targets in the experiment:
+block_seq = slab.Trialsequence(conditions=noise_gain, n_reps=n_repeat_conditions, kind='non_repeating')
+block_seq.save_json(DIR/"data"/subject/"block_sequence.json")
+for i in range(block_seq.n_trials):
+    speaker_seq = slab.Trialsequence(conditions=[target_speakers.loc[i] for i in target_speakers.index],
+                                     n_reps=n_repeat_speakers, kind='non_repeating')
+    speaker_seq.save_pickle(DIR/"data"/subject/f"speaker_sequence{i}.json")
 
-# STEP 8: run Experiment
-noise = slab.Sound.read(noise_path)
-setup.initialize_devices(ZBus=True, cam=True, RX8_file=rx81_path, RP2_file=rp2_path)
+# run a basic localization test
+loctest_seq = main.localization_test_freefield(targets=target_speakers, n_reps=n_repeat_speakers, visual=False)
+loctest_seq.save_pickle(DIR/"data"/subject/"loctest_seq.json")
 
-block_seq = slab.Trialsequence()
-block_seq.load_json(SUBDIR / Path("block_sequence.json"))
-for gain in block_seq:
+# run all the blocks:
+main.PROCESSORS.initialize(proc_list=proc_list, zbus=True, connection="GB")
+noise = slab.Sound(DIR/"stimuli"/"mri_noise.wav")
+block_seq = slab.Trialsequence(DIR/"data"/subject/"block_sequence.json")
+for noise_gain in block_seq:
     input("### Press enter to start block %s ###" % block_seq.this_n)
-    speaker_seq = slab.Trialsequence(conditions=speakers, n_reps=speaker_repetition, kind='non_repeating')
-    response = run_block(speaker_seq, gain, noise)
-    response.to_csv(SUBDIR/Path("%s_experiment_%s_block_seq.csv" % (subject, block_seq.this_n)))
-
-"""
-def run_experiment(subject, speaker_list, speaker_repitition):  # should not be needed as soon as run_block is working
-
-    while block_seq.n_remaining > 0:
-        gain = block_seq.__next__()
-        speaker_seq = slab.Trialsequence(
-            conditions=speaker_list, n_reps=speaker_repitition, kind='non_repeating')
-        input("### Press enter to start block %s ###" % block_seq.this_n)
-
-        setup.halt()
-"""
+    speaker_seq = slab.Trialsequence(DIR/"data"/subject/f"speaker_sequence{block_seq.this_n}.json")
+    speaker_seq = run_block(speaker_seq, noise_gain, noise)
+    speaker_seq.save_pickle(DIR/"data"/subject/f"speaker_sequence{block_seq.this_n}.json")
